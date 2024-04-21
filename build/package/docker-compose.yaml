@@ -1,0 +1,43 @@
+version: "3.8"  # Specify the docker-compose version
+
+services:
+  # Define the database service
+  db:
+    image: postgres:latest  # Use the latest official Postgres image
+    restart: unless-stopped  # Restart container automatically unless manually stopped
+    environment:
+      POSTGRES_PASSWORD: mypassword  # Set the Postgres password environment variable
+      POSTGRES_DB: wiki-explorer  # Set the database name
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Mount a volume named postgres_data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql  # Mount schema file
+    ports:
+      - "5432:5432"  # Map container port 5432 to host port 5432
+    networks:
+      - postgres
+
+  # Define the pgAdmin service
+  pgadmin:
+    image: dpage/pgadmin4:latest  # Use the latest pgAdmin 4 image
+    restart: unless-stopped  # Restart container automatically unless manually stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "user@example.com"  # Set the default email for pgAdmin login
+      PGADMIN_DEFAULT_PASSWORD: "password"  # Set the default password for pgAdmin login
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"  # Map container port 80 to host port 8080
+    # depends_on:
+    #   - db  # Ensure that the database service is started before pgAdmin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin  # Mount a volume named pgadmin_data to persist pgAdmin data
+    networks:
+      - postgres
+
+networks:
+  postgres:
+    driver: bridge
+
+# Define the volumes (optional, can be created automatically)
+volumes:
+  postgres_data: {}  # Empty dictionary defines a named volume for Postgres data
+  pgadmin_data: {}  # Empty dictionary defines a named volume for pgAdmin data
