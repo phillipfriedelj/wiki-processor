@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-// TODO Check if path is file
+// TODO Check if path is file and valid
 func (c *Command) ValidateFileSplit() error {
 	if c.MaxEntries <= 1 {
 		return errors.New("the split factor has to be bigger than one")

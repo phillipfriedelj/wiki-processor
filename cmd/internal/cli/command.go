@@ -3,8 +3,6 @@ package cli
 import (
 	"flag"
 	"fmt"
-
-	"github.com/phillipfriedelj/wiki-processor/cmd/internal/psql"
 )
 
 type Command struct {
@@ -42,12 +40,7 @@ func (c *Command) Run() error {
 	case "split-file":
 		return c.RunFileSplit()
 	case "export-articles-from-json":
-		mysqlDb, err := psql.Connect()
-		if err != nil {
-			return err
-		}
-		defer mysqlDb.Close()
-		return nil
+		return c.ExportArticlesJson()
 	default:
 		fmt.Printf("Validated %+v\n", c)
 		return nil

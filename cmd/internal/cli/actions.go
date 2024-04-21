@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/phillipfriedelj/wiki-processor/cmd/internal/domain"
+	"github.com/phillipfriedelj/wiki-processor/cmd/internal/psql"
+	"github.com/phillipfriedelj/wiki-processor/cmd/internal/repository"
 	"github.com/phillipfriedelj/wiki-processor/cmd/internal/util"
 )
 
@@ -115,4 +117,23 @@ func splitJsonFile(jsonPath string, maxEntries int) (int, error) {
 	}
 
 	return writtenFiles, nil
+}
+
+func (c *Command) ExportArticlesJson() error {
+	psqlDb, err := psql.Connect()
+	if err != nil {
+		return err
+	}
+	defer psqlDb.Close()
+
+	wikiRepo := repository.NewPsqlWikiRepository(psqlDb)
+
+	results, err := wikiRepo.GetAllCategoriesByLetter("z")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("RESULTS: ", results)
+
+	return nil
 }

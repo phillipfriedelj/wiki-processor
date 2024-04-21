@@ -7,7 +7,7 @@ type JsonArticle struct {
 	Categories []string `json:"Categories"`
 }
 
-type SQLArticle struct {
+type SqlArticle struct {
 	Id          int
 	Title       string
 	FirstLetter string
