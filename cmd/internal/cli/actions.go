@@ -17,6 +17,7 @@ import (
 // TODO MAKE GENERIC
 // TODO Create folder for output
 func (c *Command) RunFileSplit() error {
+	fmt.Println("Starting to split files...")
 	if c.IsDir {
 		files, err := util.GetFilesInDir(c.Path)
 		if err != nil {
@@ -53,11 +54,9 @@ func (c *Command) RunFileSplit() error {
 		_, err := splitJsonFile(c.Path, c.MaxEntries)
 		return err
 	}
-	return nil
 }
 
 func splitJsonFile(jsonPath string, maxEntries int) (int, error) {
-	fmt.Println("FILE SPLIT ACTION")
 	file, decoder, err := util.OpenJsonFile(jsonPath)
 	if err != nil {
 		fmt.Println("ERROR OPENING FILE", err)
