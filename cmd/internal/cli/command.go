@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 )
@@ -27,11 +28,12 @@ func (c *Command) Validate() error {
 	switch c.Action {
 	case "split-file":
 		return c.ValidateFileSplit()
+	case "export-categories-from-json":
+		return c.ValidateExportCategoriesFromJson()
 	case "export-articles-from-json":
 		return c.ValidateExportArticlesFromJson()
 	default:
-		fmt.Printf("Validated %+v\n", c)
-		return nil
+		return errors.New(fmt.Sprintf("no matching command found for %s", c.Action))
 	}
 }
 
@@ -39,6 +41,8 @@ func (c *Command) Run() error {
 	switch c.Action {
 	case "split-file":
 		return c.RunFileSplit()
+	case "export-categories-from-json":
+		return c.ExportCategoriesJson()
 	case "export-articles-from-json":
 		return c.ExportArticlesJson()
 	default:

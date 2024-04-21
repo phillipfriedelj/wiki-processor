@@ -2,7 +2,11 @@ package repository
 
 import "github.com/phillipfriedelj/wiki-processor/cmd/internal/domain"
 
-type WikiRepository interface {
-	CreateArticle(article domain.JsonArticle) error
-	GetAllCategoriesByLetter(letter string) error
+type ArticleRepository interface {
+	CreateArticle(article domain.JsonArticle) (int, error)
+}
+
+type CategoryRepository interface {
+	CreateCategoriesBulk(category []domain.JsonCategory) error
+	GetAllCategoriesByLetter(letter string) ([]domain.SqlCategory, error)
 }

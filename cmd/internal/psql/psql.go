@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -21,6 +22,10 @@ func Connect() (*sql.DB, error) {
 		log.Fatal("Invalid DB config: ", err)
 		return nil, err
 	}
+
+	db.SetConnMaxLifetime(time.Hour)
+	db.SetMaxIdleConns(100)
+	db.SetMaxOpenConns(100)
 
 	if err = db.Ping(); err != nil {
 		log.Fatal("DB unreachable: ", err)

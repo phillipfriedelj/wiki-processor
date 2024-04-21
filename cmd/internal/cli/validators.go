@@ -20,6 +20,13 @@ func (c *Command) ValidateFileSplit() error {
 	return nil
 }
 
+func (c *Command) ValidateExportCategoriesFromJson() error {
+	if c.Path == "" {
+		return errors.New("a path needs to be defined for this action")
+	}
+	return nil
+}
+
 func (c *Command) ValidateExportArticlesFromJson() error {
 	if c.Path == "" {
 		return errors.New("a path needs to be defined for this action")

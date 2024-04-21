@@ -51,6 +51,7 @@ func (c *Command) RunFileSplit() error {
 				return err
 			}
 		}
+		fmt.Println("Files have been split succesfully")
 		return nil
 	} else {
 		_, err := splitJsonFile(c.Path, c.MaxEntries)
@@ -117,6 +118,105 @@ func splitJsonFile(jsonPath string, maxEntries int) (int, error) {
 	}
 
 	return writtenFiles, nil
+}
+
+func (c *Command) ExportCategoriesJson() error {
+	psqlDb, err := psql.Connect()
+	if err != nil {
+		return err
+	}
+	defer psqlDb.Close()
+
+	wikiRepo := repository.NewPsqlWikiRepository(psqlDb)
+
+	if c.IsDir {
+		files, err := util.GetFilesInDir(c.Path)
+		if err != nil {
+			fmt.Println("ERROR GETTING FILES", err)
+			return err
+		}
+
+		var wg sync.WaitGroup
+		errors := make(chan error, len(files))
+
+		for _, file := range files {
+			if !file.IsDir() {
+				wg.Add(1)
+				go func(file fs.DirEntry) {
+					defer wg.Done()
+					err := extractAndStoreCategoriesJson(path.Join(c.Path, file.Name()), c.MaxEntries, &wikiRepo)
+					if err != nil {
+						errors <- err
+					}
+				}(file)
+			}
+		}
+
+		wg.Wait()
+		close(errors)
+
+		for err := range errors {
+			if err != nil {
+				return err
+			}
+		}
+		fmt.Println("Categories have been stored in the db succesfully")
+		return nil
+	} else {
+		err := extractAndStoreCategoriesJson(c.Path, c.MaxEntries, &wikiRepo)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Categories have been stored in the db succesfully")
+		return nil
+	}
+}
+
+func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo repository.CategoryRepository) error {
+
+	file, reader, err := util.OpenCSVFile(path)
+	if err != nil {
+		fmt.Println("Error opening csv file: ", err)
+	}
+	defer file.Close()
+
+	var categories []domain.JsonCategory
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			if len(categories) > 0 {
+				err := wikiRepo.CreateCategoriesBulk(categories)
+				if err != nil {
+					fmt.Println("Error performing bulk insert: ", err)
+					return err
+				}
+				categories = nil
+			}
+			break
+		}
+		if err != nil {
+			fmt.Printf("error reading CSV record: %v", err)
+			return err
+		}
+
+		// Append the value from the first column to the data slice
+		title := record[0]
+		firstLetter := string(title[0])
+
+		category := domain.JsonCategory{Title: title, FirstLetter: firstLetter}
+		categories = append(categories, category)
+
+		if len(categories) >= maxEntries {
+			err := wikiRepo.CreateCategoriesBulk(categories)
+			if err != nil {
+				fmt.Println("Error performing bulk insert: ", err)
+				return err
+			}
+			categories = nil
+		}
+	}
+
+	return nil
 }
 
 func (c *Command) ExportArticlesJson() error {
