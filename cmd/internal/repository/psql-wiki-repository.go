@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,19 @@ func (c *PsqlConnection) CreateArticle(article *domain.JsonArticle) (int, error)
 		return 0, err
 	}
 	return articleID, nil
+}
+
+func (c *PsqlConnection) CreateCategory(newCategory domain.SqlCategory) (int, error) {
+	if newCategory.Title == "" || newCategory.FirstLetter == "" {
+		fmt.Println("-----invalid request: not all fields were set")
+		return 0, errors.New("invalid request: not all fields were set")
+	}
+	var catId int
+	err := c.db.QueryRow("INSERT INTO categories(title, first_letter) VALUES ($1,$2) RETURNING id", newCategory.Title, newCategory.FirstLetter).Scan(&catId)
+	if err != nil {
+		return 0, err
+	}
+	return catId, nil
 }
 
 func (c *PsqlConnection) CreateCategoriesBulk(categories []domain.JsonCategory) error {
@@ -56,4 +70,29 @@ func (c *PsqlConnection) GetAllCategoriesByLetter(letter string) ([]domain.SqlCa
 	}
 
 	return categories, nil
+}
+
+func (c *PsqlConnection) AssociateCategories(articleID int, categories []string) error {
+	for _, category := range categories {
+		var categoryID int
+		err := c.db.QueryRow("SELECT id FROM categories WHERE title = $1", category).Scan(&categoryID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				// Category does not exist, insert it
+				firstLetter := strings.ToLower(string(category[0]))
+				categoryID, err = c.CreateCategory(domain.SqlCategory{Title: category, FirstLetter: firstLetter})
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+		// Insert into categories_articles table
+		_, err = c.db.Exec("INSERT INTO categories_articles (category_id, article_id) VALUES ($1, $2)", categoryID, articleID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
