@@ -192,22 +192,6 @@ func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo reposit
 		err := decoder.Decode(&categories)
 		if err != nil {
 			if err == io.EOF {
-				// if len(categories) > 0 {
-				// 	err := wikiRepo.CreateCategoriesBulk(categories)
-				// 	if err != nil {
-				// 		// Check if the error is due to duplicate key violation
-				// 		pgErr, ok := err.(*pq.Error)
-				// 		if ok && pgErr.Code == "23505" { // Postgres error code for unique violation
-				// 			// Handle duplicate key violation
-				// 			fmt.Println(fmt.Sprintf("[%s] Duplicate key violation: %s\n", path, err))
-				// 		} else {
-				// 			// Handle other errors
-				// 			fmt.Println(fmt.Sprintf("[%s] Error performing bulk insert: %s\n", path, err))
-				// 			return err // or continue processing, depending on your requirements
-				// 		}
-				// 		categories = nil
-				// 	}
-				// }
 				break
 			}
 			fmt.Println("Error decoding json object: ", err)
@@ -238,72 +222,7 @@ func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo reposit
 		}
 		fmt.Println("INSERTED CATS FOR ", file.Name())
 
-		// if len(categories) >= maxEntries {
-		// err := wikiRepo.CreateCategoriesBulk(categories)
-		// if err != nil {
-		// 	// Check if the error is due to duplicate key violation
-		// 	pgErr, ok := err.(*pq.Error)
-		// 	if ok && pgErr.Code == "23505" { // Postgres error code for unique violation
-		// 		// Handle duplicate key violation
-		// 		fmt.Println(fmt.Sprintf("[%s] Duplicate key violation: %s\n", path, err))
-		// 	} else {
-		// 		// Handle other errors
-		// 		fmt.Println(fmt.Sprintf("[%s] Error performing bulk insert: %s\n", path, err))
-		// 		return err // or continue processing, depending on your requirements
-		// 	}
-		// 	categories = nil
-		// }
-		// }
 	}
-	// for {
-	// 	record, err := decoder.Read()
-	// 	if err == io.EOF {
-	// 		if len(categories) > 0 {
-	// 			err := wikiRepo.CreateCategoriesBulk(categories)
-	// 			if err != nil {
-	// 				fmt.Println("Error performing bulk insert: ", err)
-	// 				return err
-	// 			}
-	// 			categories = nil
-	// 		}
-	// 		break
-	// 	}
-	// 	if err != nil {
-	// 		fmt.Printf("error reading CSV record: %v", err)
-	// 		return err
-	// 	}
-
-	// 	// Append the value from the first column to the data slice
-	// 	title := strings.Trim(string(record[0]), "\"")
-	// 	firstLetter := string(title[0])
-
-	// 	category := domain.JsonCategory{Title: title, FirstLetter: firstLetter}
-	// 	categories = append(categories, category)
-
-	// 	if len(categories) >= maxEntries {
-	// 		err := wikiRepo.CreateCategoriesBulk(categories)
-	// 		if err != nil {
-	// 			// Check if the error is due to duplicate key violation
-	// 			pgErr, ok := err.(*pq.Error)
-	// 			if ok && pgErr.Code == "23505" { // Postgres error code for unique violation
-	// 				// Handle duplicate key violation
-	// 				fmt.Println(fmt.Sprintf("[%s] Duplicate key violation: %s\n", path, err))
-	// 			} else {
-	// 				// Handle other errors
-	// 				fmt.Println(fmt.Sprintf("[%s] Error performing bulk insert: %s\n", path, err))
-	// 				return err // or continue processing, depending on your requirements
-	// 			}
-	// 			categories = nil
-	// 		}
-	// 		// err := wikiRepo.CreateCategoriesBulk(categories)
-	// 		// if err != nil {
-	// 		// 	fmt.Println(fmt.Sprintf("[%s] Error performing bulk insert: %s\n", path, err))
-	// 		// 	return err
-	// 		// }
-	// 		// categories = nil
-	// 	}
-	// }
-
 	return nil
 }
 
@@ -337,61 +256,88 @@ func (c *Command) ExportArticlesJson() error {
 			return err
 		}
 
-		for _, file := range files {
-			fmt.Println("FILE :: ", file.Name())
+		// for _, file := range files {
+		// 	fmt.Println("FILE :: ", file.Name())
+		// }
+
+		// errors := make(chan error)
+		// errProcess := new(sync.WaitGroup)
+		// errProcess.Add(1)
+		// go func() {
+		// 	for err := range errors {
+		// 		fmt.Println("ERR ", err)
+		// 	}
+		// 	errProcess.Done()
+		// }()
+
+		// Define the number of workers
+		numWorkers := 85
+
+		// Create channels for tasks and results
+		tasks := make(chan domain.JsonArticle, numWorkers)
+		results := make(chan error, numWorkers)
+		// taskProcess := new(sync.WaitGroup)
+
+		// Start worker goroutines
+		for i := 0; i < numWorkers; i++ {
+			go storeArticlesWorker(&wikiRepo, tasks, results)
 		}
-
-		errors := make(chan error)
-		errProcess := new(sync.WaitGroup)
-		errProcess.Add(1)
-		go func() {
-			for err := range errors {
-				fmt.Println("ERR ", err)
-			}
-			errProcess.Done()
-		}()
-
-		tasks := make(chan domain.JsonArticle)
-		taskProcess := new(sync.WaitGroup)
 
 		for _, file := range files {
 			if !file.IsDir() {
-				taskProcess.Add(1)
+				// taskProcess.Add(1)
 				go func(file fs.DirEntry) {
-					defer taskProcess.Done()
+					// defer taskProcess.Done()
 					err := extractJsonArticles(path.Join(c.Path, file.Name()), tasks)
-					errors <- err
+					if err != nil {
+						results <- err
+					}
 				}(file)
 			}
 		}
 
-		storeProcess := new(sync.WaitGroup)
-		storeProcess.Add(1)
+		// Wait for all tasks to be completed
 		go func() {
-			defer storeProcess.Done()
-			var batch []domain.JsonArticle
-			count := 0
-			for task := range tasks {
-				batch = append(batch, task)
-				if len(batch) >= c.MaxEntries {
-					count++
-
-					err := storeArticles(&wikiRepo, batch)
-					batch = nil
-					errors <- err
+			for i := 0; i < len(files); i++ {
+				if err := <-results; err != nil {
+					fmt.Println("ERROR:", err)
 				}
 			}
-
-			close(errors)
+			close(tasks)
 		}()
 
-		taskProcess.Wait()
-		fmt.Println("FINISHED PROCESSING")
-		close(tasks)
-		taskProcess.Wait()
+		// Wait for all workers to finish
+		for i := 0; i < numWorkers; i++ {
+			<-results
+		}
+
+		// storeProcess := new(sync.WaitGroup)
+		// storeProcess.Add(1)
+		// go func() {
+		// 	defer storeProcess.Done()
+		// 	var batch []domain.JsonArticle
+		// 	count := 0
+		// 	for task := range tasks {
+		// 		batch = append(batch, task)
+		// 		if len(batch) >= c.MaxEntries {
+		// 			count++
+
+		// 			err := storeArticles(&wikiRepo, batch)
+		// 			batch = nil
+		// 			errors <- err
+		// 		}
+		// 	}
+
+		// 	close(errors)
+		// }()
+
+		// taskProcess.Wait()
+		// fmt.Println("FINISHED PROCESSING")
+		// close(tasks)
+		// taskProcess.Wait()
 
 		// writeProcess.Wait()
-		errProcess.Wait()
+		// errProcess.Wait()
 
 		// for err := range errors {
 		// 	if err != nil {
@@ -491,53 +437,59 @@ func storeArticles(wikiRepo repository.WikiRepository, articles []domain.JsonArt
 
 	return nil
 
-	// // defer wg.Done()
-	// file, decoder, err := util.OpenJsonFile(path)
-	// if err != nil {
-	// 	fmt.Println("Error opening json file: ", err)
-	// 	return err
-	// }
-	// defer file.Close()
+}
 
-	// t, err := decoder.Token()
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-	// fmt.Printf("%T: %v\n", t, t)
+func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain.JsonArticle, results chan<- error) {
+	for article := range tasks {
+		if len(article.Categories) > 0 {
 
-	// for decoder.More() {
-	// 	// if pageCount >= MAX_COUNT {
-	// 	// 	break
-	// 	// }
-	// 	var article domain.JsonArticle
-	// 	err := decoder.Decode(&article)
-	// 	if err != nil {
-	// 		if err == io.EOF {
-	// 			break
-	// 		}
-	// 		fmt.Println("Error decoding json object: ", err)
-	// 		continue
-	// 	}
+			newCategories := article.Categories
 
-	// 	//Insert article into articles table
-	// 	articleID, err := wikiRepo.CreateArticle(&article)
-	// 	if err != nil {
-	// 		log.Println(err)
-	// 		continue
-	// 	}
+			articleId, err := wikiRepo.CreateArticle(&article)
+			if err != nil {
+				fmt.Println("ERROR CREATING ARTICLE: ", err)
+				results <- err
+			}
 
-	// 	// Associate article with categories in categories_articles table
-	// 	err = wikiRepo.AssociateCategories(articleID, article.Categories)
-	// 	if err != nil {
-	// 		log.Println(err)
-	// 		continue
-	// 	}
-	// 	fmt.Printf("Article '%s' inserted successfully\n", article.Title)
+			categoryResults, err := wikiRepo.GetExistingCategories(article.Categories)
+			if err != nil {
+				fmt.Println("ERROR GETTING EXISTING CATEGORIES: ", err)
+				results <- err
+				break
+			}
 
-	// }
+			existingCategories := categoryResults
+			for _, result := range categoryResults {
+				newCategories = remove(newCategories, result.Title)
+			}
 
-	// return nil
+			//TODO Reduce for loops
+			var newCategoryObjects []domain.JsonCategory
+			for _, newCategory := range newCategories {
+				newCategoryObjects = append(newCategoryObjects, domain.JsonCategory{Title: newCategory, FirstLetter: string(newCategory[0])})
+			}
 
+			categoryIds, err := wikiRepo.CreateCategoriesBulk(newCategoryObjects)
+			if err != nil {
+				fmt.Println("ERROR BULK INSERTING NEW CATEGORIES: ", err)
+				results <- err
+				break
+			}
+
+			for _, existingCategory := range existingCategories {
+				categoryIds = append(categoryIds, existingCategory.Id)
+			}
+
+			err = wikiRepo.BulkInsertCategoriesArticles(articleId, categoryIds)
+			if err != nil {
+				fmt.Println("ERROR BULK INSERTING ARTICLE AND CATEGORY REFERENCES: ", err)
+				results <- err
+				break
+			}
+
+			fmt.Println("STORED SUCCESSFULLY ARTICLE -- ", article.Title, " -ID: ", articleId)
+		}
+	}
 }
 
 func remove(slice []string, item string) []string {
