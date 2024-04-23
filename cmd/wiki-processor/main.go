@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/phillipfriedelj/wiki-processor/cmd/internal/cli"
 )
 
 func main() {
+	start := time.Now()
 	command := cli.ParseCommandLineArgs()
 
 	err := command.Validate()
@@ -17,4 +19,7 @@ func main() {
 	if err != nil {
 		fmt.Println("Error running action: ", err)
 	}
+
+	end := time.Now()
+	fmt.Println("### DURATION :: ", end.Sub(start))
 }

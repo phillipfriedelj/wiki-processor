@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -223,7 +222,7 @@ func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo reposit
 
 		chunkedCategories := chunkSlice(categoryObjects, 25000)
 		for _, chunk := range chunkedCategories {
-			err = wikiRepo.CreateCategoriesBulk(chunk)
+			_, err = wikiRepo.CreateCategoriesBulk(chunk)
 			if err != nil {
 				// Check if the error is due to duplicate key violation
 				pgErr, ok := err.(*pq.Error)
@@ -361,25 +360,25 @@ func (c *Command) ExportArticlesJson() error {
 				go func(file fs.DirEntry) {
 					defer taskProcess.Done()
 					err := extractJsonArticles(path.Join(c.Path, file.Name()), tasks)
-					// if err != nil {
-					// 	fmt.Println("ERROR :: ", err)
-					// }
 					errors <- err
 				}(file)
 			}
 		}
 
+		storeProcess := new(sync.WaitGroup)
+		storeProcess.Add(1)
 		go func() {
+			defer storeProcess.Done()
 			var batch []domain.JsonArticle
 			count := 0
 			for task := range tasks {
 				batch = append(batch, task)
 				if len(batch) >= c.MaxEntries {
-					fmt.Println("BATCH - ", len(batch), " -- MAX: ", c.MaxEntries)
-					fmt.Println("WRITING TO DB -- ", count)
 					count++
+
+					err := storeArticles(&wikiRepo, batch)
 					batch = nil
-					//WRITE TO DB
+					errors <- err
 				}
 			}
 
@@ -389,6 +388,8 @@ func (c *Command) ExportArticlesJson() error {
 		taskProcess.Wait()
 		fmt.Println("FINISHED PROCESSING")
 		close(tasks)
+		taskProcess.Wait()
+
 		// writeProcess.Wait()
 		errProcess.Wait()
 
@@ -401,8 +402,9 @@ func (c *Command) ExportArticlesJson() error {
 		return nil
 
 	} else {
-		err := extractAndStoreArticles(c.Path, &wikiRepo)
-		return err
+		//TODO Figure out for single file
+		//err := extractAndStoreArticles(c.Path, &wikiRepo)
+		return nil
 	}
 }
 
@@ -438,53 +440,112 @@ func extractJsonArticles(path string, taskChan chan domain.JsonArticle) error {
 	return nil
 }
 
-func extractAndStoreArticles(path string, wikiRepo repository.WikiRepository) error {
-	fmt.Println("EXTRCTING -- ", path)
-	// defer wg.Done()
-	file, decoder, err := util.OpenJsonFile(path)
-	if err != nil {
-		fmt.Println("Error opening json file: ", err)
-		return err
-	}
-	defer file.Close()
+func storeArticles(wikiRepo repository.WikiRepository, articles []domain.JsonArticle) error {
+	for _, article := range articles {
+		if len(article.Categories) > 0 {
 
-	t, err := decoder.Token()
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Printf("%T: %v\n", t, t)
+			newCategories := article.Categories
 
-	for decoder.More() {
-		// if pageCount >= MAX_COUNT {
-		// 	break
-		// }
-		var article domain.JsonArticle
-		err := decoder.Decode(&article)
-		if err != nil {
-			if err == io.EOF {
+			articleId, err := wikiRepo.CreateArticle(&article)
+			if err != nil {
+				fmt.Println("ERROR CREATING ARTICLE: ", err)
+				return err
+			}
+
+			results, err := wikiRepo.GetExistingCategories(article.Categories)
+			if err != nil {
+				fmt.Println("ERROR GETTING EXISTING CATEGORIES: ", err)
 				break
 			}
-			fmt.Println("Error decoding json object: ", err)
-			continue
-		}
 
-		//Insert article into articles table
-		articleID, err := wikiRepo.CreateArticle(&article)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
+			existingCategories := results
+			for _, result := range results {
+				newCategories = remove(newCategories, result.Title)
+			}
 
-		// Associate article with categories in categories_articles table
-		err = wikiRepo.AssociateCategories(articleID, article.Categories)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		fmt.Printf("Article '%s' inserted successfully\n", article.Title)
+			//TODO Reduce for loops
+			var newCategoryObjects []domain.JsonCategory
+			for _, newCategory := range newCategories {
+				newCategoryObjects = append(newCategoryObjects, domain.JsonCategory{Title: newCategory, FirstLetter: string(newCategory[0])})
+			}
 
+			categoryIds, err := wikiRepo.CreateCategoriesBulk(newCategoryObjects)
+			if err != nil {
+				fmt.Println("ERROR BULK INSERTING NEW CATEGORIES: ", err)
+				break
+			}
+
+			for _, existingCategory := range existingCategories {
+				categoryIds = append(categoryIds, existingCategory.Id)
+			}
+
+			err = wikiRepo.BulkInsertCategoriesArticles(articleId, categoryIds)
+			if err != nil {
+				fmt.Println("ERROR BULK INSERTING ARTICLE AND CATEGORY REFERENCES: ", err)
+				break
+			}
+
+			fmt.Println("STORED SUCCESSFULLY ARTICLE -- ", article.Title, " -ID: ", articleId)
+		}
 	}
 
 	return nil
 
+	// // defer wg.Done()
+	// file, decoder, err := util.OpenJsonFile(path)
+	// if err != nil {
+	// 	fmt.Println("Error opening json file: ", err)
+	// 	return err
+	// }
+	// defer file.Close()
+
+	// t, err := decoder.Token()
+	// if err != nil {
+	// 	fmt.Println(err)
+	// }
+	// fmt.Printf("%T: %v\n", t, t)
+
+	// for decoder.More() {
+	// 	// if pageCount >= MAX_COUNT {
+	// 	// 	break
+	// 	// }
+	// 	var article domain.JsonArticle
+	// 	err := decoder.Decode(&article)
+	// 	if err != nil {
+	// 		if err == io.EOF {
+	// 			break
+	// 		}
+	// 		fmt.Println("Error decoding json object: ", err)
+	// 		continue
+	// 	}
+
+	// 	//Insert article into articles table
+	// 	articleID, err := wikiRepo.CreateArticle(&article)
+	// 	if err != nil {
+	// 		log.Println(err)
+	// 		continue
+	// 	}
+
+	// 	// Associate article with categories in categories_articles table
+	// 	err = wikiRepo.AssociateCategories(articleID, article.Categories)
+	// 	if err != nil {
+	// 		log.Println(err)
+	// 		continue
+	// 	}
+	// 	fmt.Printf("Article '%s' inserted successfully\n", article.Title)
+
+	// }
+
+	// return nil
+
+}
+
+func remove(slice []string, item string) []string {
+	newSlice := make([]string, 0)
+	for _, v := range slice {
+		if v != item {
+			newSlice = append(newSlice, v)
+		}
+	}
+	return newSlice
 }

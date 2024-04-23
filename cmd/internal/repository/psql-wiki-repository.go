@@ -41,17 +41,38 @@ func (c *PsqlConnection) CreateCategory(newCategory domain.SqlCategory) (int, er
 	return catId, nil
 }
 
-func (c *PsqlConnection) CreateCategoriesBulk(categories []domain.JsonCategory) error {
-	valueStrings := make([]string, 0, len(categories))
-	valueArgs := make([]any, 0, len(categories)*2)
-	for i, category := range categories {
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
-		valueArgs = append(valueArgs, category.Title)
-		valueArgs = append(valueArgs, category.FirstLetter)
+func (c *PsqlConnection) CreateCategoriesBulk(categories []domain.JsonCategory) ([]int, error) {
+	// Begin a transaction
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, err
 	}
-	stmt := fmt.Sprintf("INSERT INTO categories(title, first_letter) VALUES %s", strings.Join(valueStrings, ","))
-	_, err := c.db.Exec(stmt, valueArgs...)
-	return err
+	defer tx.Rollback()
+
+	// Prepare the statement with RETURNING clause
+	stmt, err := tx.Prepare("INSERT INTO categories (title, first_letter) VALUES ($1, $2) RETURNING id")
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	// Execute the bulk insert
+	var ids []int
+	for _, category := range categories {
+		var categoryID int
+		err := stmt.QueryRow(category.Title, category.FirstLetter).Scan(&categoryID)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, categoryID)
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return ids, nil
 }
 
 func (c *PsqlConnection) GetAllCategoriesByLetter(letter string) ([]domain.SqlCategory, error) {
@@ -73,6 +94,7 @@ func (c *PsqlConnection) GetAllCategoriesByLetter(letter string) ([]domain.SqlCa
 }
 
 func (c *PsqlConnection) AssociateCategories(articleID int, categories []string) error {
+
 	for _, category := range categories {
 		var categoryID int
 		err := c.db.QueryRow("SELECT id FROM categories WHERE title = $1", category).Scan(&categoryID)
@@ -94,5 +116,69 @@ func (c *PsqlConnection) AssociateCategories(articleID int, categories []string)
 			return err
 		}
 	}
+	return nil
+}
+
+func (c *PsqlConnection) GetExistingCategories(categories []string) ([]domain.SqlCategory, error) {
+	// Create a query to fetch existing categories from the database
+	query := "SELECT id, title FROM categories WHERE title IN ("
+	placeholders := make([]string, len(categories))
+	args := make([]interface{}, len(categories))
+	for i, cat := range categories {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = cat
+	}
+	query += strings.Join(placeholders, ", ") + ")"
+	// Execute the query
+	rows, err := c.db.Query(query, args...)
+	if err != nil {
+		fmt.Println("ERROR EXISTING CATS :: ", categories)
+		fmt.Println("ERROR EXISTING STMT :: ", query)
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Iterate over the result set
+	var results []domain.SqlCategory
+	for rows.Next() {
+		var category domain.SqlCategory
+		err := rows.Scan(&category.Id, &category.Title)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, category)
+	}
+
+	return results, nil
+}
+
+func (c *PsqlConnection) BulkInsertCategoriesArticles(articleID int, categoryIDs []int) error {
+	// Begin a transaction
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Prepare the INSERT statement with multiple rows
+	valueStrings := make([]string, 0, len(categoryIDs))
+	valueArgs := make([]any, 0, len(categoryIDs)*2)
+	for i, categoryId := range categoryIDs {
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
+		valueArgs = append(valueArgs, categoryId)
+		valueArgs = append(valueArgs, articleID)
+	}
+	stmt := fmt.Sprintf("INSERT INTO categories_articles (category_id, article_id) VALUES %s", strings.Join(valueStrings, ","))
+	// Execute the bulk insert
+	_, err = tx.Exec(stmt, valueArgs...)
+	if err != nil {
+		return err
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	return nil
 }
