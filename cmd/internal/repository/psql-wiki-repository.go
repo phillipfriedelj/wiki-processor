@@ -93,6 +93,17 @@ func (c *PsqlConnection) GetAllCategoriesByLetter(letter string) ([]domain.SqlCa
 	return categories, nil
 }
 
+func (c *PsqlConnection) GetCategoryID(category string) (int, error) {
+	row := c.db.QueryRow("SELECT id FROM categories WHERE title=$1", category)
+	var id int
+	err := row.Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+
+	return id, nil
+}
+
 func (c *PsqlConnection) AssociateCategories(articleID int, categories []string) error {
 
 	for _, category := range categories {

@@ -256,93 +256,52 @@ func (c *Command) ExportArticlesJson() error {
 			return err
 		}
 
-		// for _, file := range files {
-		// 	fmt.Println("FILE :: ", file.Name())
-		// }
-
-		// errors := make(chan error)
-		// errProcess := new(sync.WaitGroup)
-		// errProcess.Add(1)
-		// go func() {
-		// 	for err := range errors {
-		// 		fmt.Println("ERR ", err)
-		// 	}
-		// 	errProcess.Done()
-		// }()
-
 		// Define the number of workers
 		numWorkers := 85
 
 		// Create channels for tasks and results
 		tasks := make(chan domain.JsonArticle, numWorkers)
 		results := make(chan error, numWorkers)
-		// taskProcess := new(sync.WaitGroup)
 
+		var workersWg sync.WaitGroup
+		workersWg.Add(numWorkers)
 		// Start worker goroutines
 		for i := 0; i < numWorkers; i++ {
-			go storeArticlesWorker(&wikiRepo, tasks, results)
+			go storeArticlesWorker(&wikiRepo, tasks, results, &workersWg)
 		}
+
+		var wg sync.WaitGroup
 
 		for _, file := range files {
 			if !file.IsDir() {
-				// taskProcess.Add(1)
+				wg.Add(1)
 				go func(file fs.DirEntry) {
-					// defer taskProcess.Done()
+					defer wg.Done()
 					err := extractJsonArticles(path.Join(c.Path, file.Name()), tasks)
 					if err != nil {
 						results <- err
 					}
+					fmt.Println("DONE WITH ONE GOROUTINE")
 				}(file)
 			}
 		}
 
-		// Wait for all tasks to be completed
-		go func() {
-			for i := 0; i < len(files); i++ {
-				if err := <-results; err != nil {
-					fmt.Println("ERROR:", err)
-				}
-			}
-			close(tasks)
-		}()
+		// Wait until all tasks are done
+		wg.Wait()
+		// Once all tasks are done, close the tasks channel
+		close(tasks)
+		fmt.Println("CLOSED ALL TASKS")
 
-		// Wait for all workers to finish
-		for i := 0; i < numWorkers; i++ {
-			<-results
+		workersWg.Wait()
+		close(results)
+
+		for result := range results {
+			fmt.Println("RESULT :: ", result)
 		}
 
-		// storeProcess := new(sync.WaitGroup)
-		// storeProcess.Add(1)
-		// go func() {
-		// 	defer storeProcess.Done()
-		// 	var batch []domain.JsonArticle
-		// 	count := 0
-		// 	for task := range tasks {
-		// 		batch = append(batch, task)
-		// 		if len(batch) >= c.MaxEntries {
-		// 			count++
-
-		// 			err := storeArticles(&wikiRepo, batch)
-		// 			batch = nil
-		// 			errors <- err
-		// 		}
-		// 	}
-
-		// 	close(errors)
-		// }()
-
-		// taskProcess.Wait()
-		// fmt.Println("FINISHED PROCESSING")
-		// close(tasks)
-		// taskProcess.Wait()
-
-		// writeProcess.Wait()
-		// errProcess.Wait()
-
-		// for err := range errors {
-		// 	if err != nil {
-		// 		return err
-		// 	}
+		// Wait for all workers to finish
+		// for i := 0; i < numWorkers; i++ {
+		// 	<-results
 		// }
 		fmt.Println("Articles and categories successfully inserted and associated!")
 		return nil
@@ -374,15 +333,14 @@ func extractJsonArticles(path string, taskChan chan domain.JsonArticle) error {
 		err := decoder.Decode(&article)
 		if err != nil {
 			if err == io.EOF {
-				break
+				return nil
 			}
 			fmt.Println("Error decoding json object: ", err)
 			continue
 		}
-
 		taskChan <- article
 	}
-
+	fmt.Println("NO MORE IN FILE :: ")
 	return nil
 }
 
@@ -439,11 +397,12 @@ func storeArticles(wikiRepo repository.WikiRepository, articles []domain.JsonArt
 
 }
 
-func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain.JsonArticle, results chan<- error) {
+func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain.JsonArticle, results chan<- error, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for article := range tasks {
 		if len(article.Categories) > 0 {
 
-			newCategories := article.Categories
+			// newCategories := article.Categories
 
 			articleId, err := wikiRepo.CreateArticle(&article)
 			if err != nil {
@@ -451,33 +410,10 @@ func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain
 				results <- err
 			}
 
-			categoryResults, err := wikiRepo.GetExistingCategories(article.Categories)
+			categoryIds, err := getOrCreateCategories(wikiRepo, article.Categories)
 			if err != nil {
-				fmt.Println("ERROR GETTING EXISTING CATEGORIES: ", err)
+				fmt.Println("ERROR CREATING GETTING/CREATING CATEGORIES: ", err)
 				results <- err
-				break
-			}
-
-			existingCategories := categoryResults
-			for _, result := range categoryResults {
-				newCategories = remove(newCategories, result.Title)
-			}
-
-			//TODO Reduce for loops
-			var newCategoryObjects []domain.JsonCategory
-			for _, newCategory := range newCategories {
-				newCategoryObjects = append(newCategoryObjects, domain.JsonCategory{Title: newCategory, FirstLetter: string(newCategory[0])})
-			}
-
-			categoryIds, err := wikiRepo.CreateCategoriesBulk(newCategoryObjects)
-			if err != nil {
-				fmt.Println("ERROR BULK INSERTING NEW CATEGORIES: ", err)
-				results <- err
-				break
-			}
-
-			for _, existingCategory := range existingCategories {
-				categoryIds = append(categoryIds, existingCategory.Id)
 			}
 
 			err = wikiRepo.BulkInsertCategoriesArticles(articleId, categoryIds)
@@ -490,6 +426,35 @@ func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain
 			fmt.Println("STORED SUCCESSFULLY ARTICLE -- ", article.Title, " -ID: ", articleId)
 		}
 	}
+}
+
+func getOrCreateCategories(wikiRepo repository.WikiRepository, categories []string) ([]int, error) {
+	// Initialize a slice to store category IDs
+	var categoryIDs []int
+
+	// Iterate over each category title
+	for _, category := range categories {
+		// Check if the category already exists in the database
+		categoryID, err := wikiRepo.GetCategoryID(category)
+
+		if err != nil {
+			fmt.Println("ERROR GETTING ID FOR CATEGORY  ", category, ":", err)
+			return nil, err
+		}
+		// If the category does not exist, create it and get its ID
+		if categoryID == 0 {
+			category := domain.SqlCategory{Title: category, FirstLetter: string(category[0])}
+			newCategoryID, err := wikiRepo.CreateCategory(category)
+			if err != nil {
+				fmt.Println("ERROR ADDING NEW CATEGORY ", category, " : ", err)
+				break
+			}
+			categoryID = newCategoryID
+		}
+		// Add the category ID to the slice
+		categoryIDs = append(categoryIDs, categoryID)
+	}
+	return categoryIDs, nil
 }
 
 func remove(slice []string, item string) []string {
