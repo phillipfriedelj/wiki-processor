@@ -257,7 +257,7 @@ func (c *Command) ExportArticlesJson() error {
 		}
 
 		// Define the number of workers
-		numWorkers := 85
+		numWorkers := 99
 
 		// Create channels for tasks and results
 		tasks := make(chan domain.JsonArticle, numWorkers)
