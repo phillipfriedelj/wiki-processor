@@ -221,7 +221,7 @@ func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo reposit
 			categoryObjects = append(categoryObjects, domain.JsonCategory{Title: category, FirstLetter: firstLetter})
 		}
 
-		chunkedCategories := ChunkSlice(categoryObjects, 25000)
+		chunkedCategories := chunkSlice(categoryObjects, 25000)
 		for _, chunk := range chunkedCategories {
 			err = wikiRepo.CreateCategoriesBulk(chunk)
 			if err != nil {
@@ -308,7 +308,7 @@ func extractAndStoreCategoriesJson(path string, maxEntries int, wikiRepo reposit
 	return nil
 }
 
-func ChunkSlice(slice []domain.JsonCategory, chunkSize int) [][]domain.JsonCategory {
+func chunkSlice(slice []domain.JsonCategory, chunkSize int) [][]domain.JsonCategory {
 	var chunks [][]domain.JsonCategory
 
 	for i := 0; i < len(slice); i += chunkSize {
@@ -342,30 +342,61 @@ func (c *Command) ExportArticlesJson() error {
 			fmt.Println("FILE :: ", file.Name())
 		}
 
-		var wg sync.WaitGroup
-		errors := make(chan error, len(files))
+		errors := make(chan error)
+		errProcess := new(sync.WaitGroup)
+		errProcess.Add(1)
+		go func() {
+			for err := range errors {
+				fmt.Println("ERR ", err)
+			}
+			errProcess.Done()
+		}()
+
+		tasks := make(chan domain.JsonArticle)
+		taskProcess := new(sync.WaitGroup)
 
 		for _, file := range files {
 			if !file.IsDir() {
-				wg.Add(1)
+				taskProcess.Add(1)
 				go func(file fs.DirEntry) {
-					defer wg.Done()
-					err := extractAndStoreArticles(path.Join(c.Path, file.Name()), &wikiRepo)
-					if err != nil {
-						errors <- err
-					}
+					defer taskProcess.Done()
+					err := extractJsonArticles(path.Join(c.Path, file.Name()), tasks)
+					// if err != nil {
+					// 	fmt.Println("ERROR :: ", err)
+					// }
+					errors <- err
 				}(file)
 			}
 		}
 
-		wg.Wait()
-		close(errors)
-
-		for err := range errors {
-			if err != nil {
-				return err
+		go func() {
+			var batch []domain.JsonArticle
+			count := 0
+			for task := range tasks {
+				batch = append(batch, task)
+				if len(batch) >= c.MaxEntries {
+					fmt.Println("BATCH - ", len(batch), " -- MAX: ", c.MaxEntries)
+					fmt.Println("WRITING TO DB -- ", count)
+					count++
+					batch = nil
+					//WRITE TO DB
+				}
 			}
-		}
+
+			close(errors)
+		}()
+
+		taskProcess.Wait()
+		fmt.Println("FINISHED PROCESSING")
+		close(tasks)
+		// writeProcess.Wait()
+		errProcess.Wait()
+
+		// for err := range errors {
+		// 	if err != nil {
+		// 		return err
+		// 	}
+		// }
 		fmt.Println("Articles and categories successfully inserted and associated!")
 		return nil
 
@@ -373,6 +404,38 @@ func (c *Command) ExportArticlesJson() error {
 		err := extractAndStoreArticles(c.Path, &wikiRepo)
 		return err
 	}
+}
+
+func extractJsonArticles(path string, taskChan chan domain.JsonArticle) error {
+	file, decoder, err := util.OpenJsonFile(path)
+	if err != nil {
+		fmt.Println("Error opening json file: ", err)
+		return err
+	}
+	defer file.Close()
+
+	_, err = decoder.Token()
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	//TODO Batch send to channel
+	for decoder.More() {
+		var article domain.JsonArticle
+		err := decoder.Decode(&article)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Println("Error decoding json object: ", err)
+			continue
+		}
+
+		taskChan <- article
+	}
+
+	return nil
 }
 
 func extractAndStoreArticles(path string, wikiRepo repository.WikiRepository) error {
