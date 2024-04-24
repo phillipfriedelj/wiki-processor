@@ -257,7 +257,7 @@ func (c *Command) ExportArticlesJson() error {
 		}
 
 		// Define the number of workers
-		numWorkers := 99
+		numWorkers := 90
 
 		// Create channels for tasks and results
 		tasks := make(chan domain.JsonArticle, numWorkers)
@@ -400,16 +400,18 @@ func storeArticles(wikiRepo repository.WikiRepository, articles []domain.JsonArt
 func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain.JsonArticle, results chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for article := range tasks {
+		articleId, _ := wikiRepo.GetArticleID(article.Title)
+		if articleId > 0 {
+			break
+		}
+
+		// newCategories := article.Categories
+		articleId, err := wikiRepo.CreateArticle(&article)
+		if err != nil {
+			fmt.Println("ERROR CREATING ARTICLE: ", err)
+			results <- err
+		}
 		if len(article.Categories) > 0 {
-
-			// newCategories := article.Categories
-
-			articleId, err := wikiRepo.CreateArticle(&article)
-			if err != nil {
-				fmt.Println("ERROR CREATING ARTICLE: ", err)
-				results <- err
-			}
-
 			categoryIds, err := getOrCreateCategories(wikiRepo, article.Categories)
 			if err != nil {
 				fmt.Println("ERROR CREATING GETTING/CREATING CATEGORIES: ", err)
@@ -424,6 +426,9 @@ func storeArticlesWorker(wikiRepo repository.WikiRepository, tasks <-chan domain
 			}
 
 			fmt.Println("STORED SUCCESSFULLY ARTICLE -- ", article.Title, " -ID: ", articleId)
+		} else {
+			fmt.Println("EITHER CATEGORIES EMPTY OR ARTICLE ALREADY PRESENT -- ", article.Title, " -CATS: ", article.Categories)
+
 		}
 	}
 }
@@ -434,25 +439,26 @@ func getOrCreateCategories(wikiRepo repository.WikiRepository, categories []stri
 
 	// Iterate over each category title
 	for _, category := range categories {
-		// Check if the category already exists in the database
-		categoryID, err := wikiRepo.GetCategoryID(category)
-
-		if err != nil {
-			fmt.Println("ERROR GETTING ID FOR CATEGORY  ", category, ":", err)
-			return nil, err
-		}
-		// If the category does not exist, create it and get its ID
-		if categoryID == 0 {
-			category := domain.SqlCategory{Title: category, FirstLetter: string(category[0])}
-			newCategoryID, err := wikiRepo.CreateCategory(category)
-			if err != nil {
-				fmt.Println("ERROR ADDING NEW CATEGORY ", category, " : ", err)
-				break
+		if category != "" {
+			// Check if the category already exists in the database
+			categoryID, _ := wikiRepo.GetCategoryID(category)
+			// if err != nil {
+			// 	fmt.Println("ERROR GETTING ID FOR CATEGORY  ", category, ":", err)
+			// 	return nil, err
+			// }
+			// If the category does not exist, create it and get its ID
+			if categoryID == 0 {
+				category := domain.SqlCategory{Title: category, FirstLetter: string(category[0])}
+				newCategoryID, err := wikiRepo.CreateCategory(category)
+				if err != nil {
+					fmt.Println("ERROR ADDING NEW CATEGORY ", category, " : ", err)
+					break
+				}
+				categoryID = newCategoryID
 			}
-			categoryID = newCategoryID
+			// Add the category ID to the slice
+			categoryIDs = append(categoryIDs, categoryID)
 		}
-		// Add the category ID to the slice
-		categoryIDs = append(categoryIDs, categoryID)
 	}
 	return categoryIDs, nil
 }

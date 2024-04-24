@@ -5,6 +5,7 @@ import "github.com/phillipfriedelj/wiki-processor/cmd/internal/domain"
 //TODO Make all SQL
 type WikiRepository interface {
 	CreateArticle(article *domain.JsonArticle) (int, error)
+	GetArticleID(article string) (int, error)
 	CreateCategory(newCategory domain.SqlCategory) (int, error)
 	CreateCategoriesBulk(categories []domain.JsonCategory) ([]int, error)
 	GetCategoryID(string) (int, error)

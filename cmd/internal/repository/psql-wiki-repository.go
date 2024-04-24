@@ -28,6 +28,17 @@ func (c *PsqlConnection) CreateArticle(article *domain.JsonArticle) (int, error)
 	return articleID, nil
 }
 
+func (c *PsqlConnection) GetArticleID(article string) (int, error) {
+	row := c.db.QueryRow("SELECT id FROM articles WHERE title=$1", article)
+	var id int
+	err := row.Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+
+	return id, nil
+}
+
 func (c *PsqlConnection) CreateCategory(newCategory domain.SqlCategory) (int, error) {
 	if newCategory.Title == "" || newCategory.FirstLetter == "" {
 		fmt.Println("-----invalid request: not all fields were set")
